@@ -1,5 +1,5 @@
 # Use jlesage/docker-baseimage-gui as the base image
-FROM jlesage/docker-baseimage-gui:debian-11
+FROM jlesage/baseimage-gui:alpine-3.19-v4
 
 # Set working directory
 WORKDIR /app
