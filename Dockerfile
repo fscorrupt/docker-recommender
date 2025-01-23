@@ -16,8 +16,9 @@ ENV KEEP_APP_RUNNING=1
 RUN apt-get update && apt-get install -y \
     sqlite3 \
     python3-pyqt6 \
+    python3-pip \
     && rm -rf /var/lib/apt/lists/* \
-    && pip install --no-cache-dir -r requirements.txt
+    && pip3 install --no-cache-dir -r requirements.txt
 
 # Expose the VNC port used by the base image (default: 5800)
 EXPOSE 5800
