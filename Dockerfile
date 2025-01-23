@@ -11,13 +11,13 @@ COPY . /app
 ENV APP_NAME="RECOMMENDER WEB GUI"
 ENV KEEP_APP_RUNNING=1
 
-
 # Install system dependencies, Python pip, and virtual environment module
 RUN apt-get update && apt-get install -y \
     sqlite3 \
     python3-pyqt6 \
     python3-pip \
     python3-venv \
+    libgl1 \
     && rm -rf /var/lib/apt/lists/*
 
 # Create and activate a Python virtual environment, then install requirements
