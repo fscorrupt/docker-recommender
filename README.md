@@ -147,6 +147,9 @@ python main.py
 - Clear your entire watchlist from the Configuration tab
 - Items sync with your Plex server
 
+### Plex Watch History and Ratings
+In short, you have the option to import your prior watch history and Plex side ratings. This allows the program to create better recommendations.
+
 ## Need Help?
 
 ### Common Issues
