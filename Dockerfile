@@ -29,12 +29,6 @@ RUN python3 -m venv /app/venv \
     && /app/venv/bin/pip install --no-cache-dir --upgrade pip \
     && /app/venv/bin/pip install --no-cache-dir -r /app/requirements.txt
 
-# Add Python virtual environment to PATH
-ENV PATH="/app/venv/bin:$PATH"
-
-# Debugging: Check for libGL.so.1
-RUN find / -name "libGL.so.1"
-
 # Expose the VNC port used by the base image (default: 5800)
 EXPOSE 5800
 
