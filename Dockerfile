@@ -11,7 +11,7 @@ COPY . /app
 ENV APP_NAME="RECOMMENDER WEB GUI"
 ENV KEEP_APP_RUNNING=1
 
-# Install system dependencies, OpenGL libraries, Python pip, and virtual environment module
+# Install system dependencies
 RUN apt-get update && apt-get install -y \
     sqlite3 \
     python3-pyqt6 \
