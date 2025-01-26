@@ -18,7 +18,7 @@ RUN apt-get update && apt-get install -y \
     python3-pip \
     python3-venv \
     libgl1 \
-    libegl1 \
+	libegl1 \
     libx11-xcb1 \
     libxcb-glx0 \
     libxcb-icccm4 \
@@ -36,4 +36,4 @@ RUN chmod -R 755 /app/venv
 EXPOSE 5800
 
 # Use the virtual environment Python to run the application
-CMD ["/app/venv/bin/python", "/app/main.py"]
+CMD ["/app/venv/bin/python3", "/app/main.py"]
