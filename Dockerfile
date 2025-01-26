@@ -11,7 +11,7 @@ COPY . /app
 ENV APP_NAME="RECOMMENDER WEB GUI"
 ENV KEEP_APP_RUNNING=1
 
-# Install system dependencies, Python pip, and virtual environment module
+# Install system dependencies, OpenGL libraries, Python pip, and virtual environment module
 RUN apt-get update && apt-get install -y \
     sqlite3 \
     python3-pyqt6 \
@@ -20,13 +20,16 @@ RUN apt-get update && apt-get install -y \
     libgl1 \
     && rm -rf /var/lib/apt/lists/*
 
-# Create and activate a Python virtual environment, then install requirements
+# Create a Python virtual environment in the app directory
 RUN python3 -m venv /app/venv \
-    && /app/venv/bin/pip install --no-cache-dir --upgrade pip \
-    && /app/venv/bin/pip install --no-cache-dir -r /app/requirements.txt
+    && /app/venv/bin/python -m pip install --no-cache-dir --upgrade pip \
+    && /app/venv/bin/python -m pip install --no-cache-dir -r /app/requirements.txt
+
+# Ensure the venv is executable
+RUN chmod -R 755 /app/venv
 
 # Expose the VNC port used by the base image (default: 5800)
 EXPOSE 5800
 
 # Use the virtual environment Python to run the application
-CMD ["/app/venv/bin/python", "/app/main.py"]
+CMD ["/app/venv/bin/python3", "/app/main.py"]
