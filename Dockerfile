@@ -7,18 +7,19 @@ WORKDIR /app
 # Copy application files into the container
 COPY . /app
 
-# Install required system dependencies
-RUN apk add --no-cache \
+# Install Python and dependencies
+RUN apt-get update && apt-get install -y \
     python3 \
-    py3-pip \
-    sqlite \
-    && pip3 install --upgrade pip
+    python3-pip \
+    sqlite3 \
+    && apt-get clean
 
 # Install Python dependencies
-RUN pip3 install -r /app/requirements.txt
+RUN pip3 install --no-cache-dir -r /app/requirements.txt
 
 # Expose the default VNC port
 EXPOSE 5800
+
 
 # Set environment variables for GUI
 ENV APP_NAME="Recommender"
