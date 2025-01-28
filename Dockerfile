@@ -1,28 +1,30 @@
-# Use the jlesage/baseimage-gui image as the base
-FROM jlesage/baseimage-gui:debian-11-v4
+# Pull base image.
+FROM jlesage/baseimage-gui:alpine-3.19-v4
 
 # Set working directory
 WORKDIR /app
 
-# Copy application files into the container
+# Install Python and required system dependencies.
+RUN add-pkg python3 py3-pip sqlite && \
+    pip3 install --upgrade pip
+
+# Copy application files into the container.
 COPY . /app
 
-# Install Python and dependencies
-RUN apt-get update && apt-get install -y \
-    python3 \
-    python3-pip \
-    sqlite3 \
-    && apt-get clean
+# Install Python dependencies from requirements.txt.
+RUN pip3 install -r /app/requirements.txt
 
-# Install Python dependencies
-RUN pip3 install --no-cache-dir -r /app/requirements.txt
+# Copy the start script.
+COPY startapp.sh /startapp.sh
 
-# Expose the default VNC port
+# Make the start script executable.
+RUN chmod +x /startapp.sh
+
+# Set the name of the application.
+RUN set-cont-env APP_NAME "Recommender"
+
+# Expose the default VNC port for browser-based access.
 EXPOSE 5800
 
-
-# Set environment variables for GUI
-ENV APP_NAME="Recommender"
-
-# Command to run your Python application
-CMD ["python3", "/app/main.py"]
+# Set the command to run the start script.
+CMD ["/startapp.sh"]
