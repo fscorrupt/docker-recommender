@@ -9,7 +9,8 @@ Get personalized movie and TV show recommendations based on your Plex libraries 
 
 ![image](https://github.com/user-attachments/assets/5b0fc52b-24b2-4a47-86a5-eef317ba0e16)
 
-![image](https://github.com/user-attachments/assets/98be5b16-5870-420f-aace-2f1c8a19bef5)
+![image](https://github.com/user-attachments/assets/ba808086-5915-42d2-b256-56e9141b8236)
+
 
 
 
@@ -26,6 +27,8 @@ The app runs completely independently of your Plex server. It only interacts wit
 - Add items to your watchlist when requested
 - Create/modify collections when requested
 - Fetch poster images for display
+- Sync watch history (if enabled) to give improved recommendations
+- Sync Plex server side ratings (if enabled) to give improved recommendations
 
 All recommendation logic, learning, and data storage happens locally in the app. Your Plex server is never modified without explicit actions from you.
 
@@ -36,6 +39,7 @@ All recommendation logic, learning, and data storage happens locally in the app.
 - Skip things you're not interested in
 - Block items you never want to see
 - Go back to previous recommendations
+- Can import your watch history and Plex side ratings to improve it's learning.
 - Gets better the more you use it
 
 ### Plex Integration
@@ -43,6 +47,7 @@ All recommendation logic, learning, and data storage happens locally in the app.
 - Adds items to your Plex watchlist
 - Creates collections in Plex
 - Auto-adds highly rated movies to collections
+- Can import your watch history and Plex side ratings to improve it's learning.
 
 ## Getting Started
 
@@ -113,7 +118,7 @@ python main.py
 1. In the Configuration tab:
    - Enter your Plex URL (e.g., http://localhost:32400)
    - Add your Plex token
-   - Add your TVDB and TMDB API keys
+   - Add your TVDB and TMDB API keys (Use the read only token for TMDB)
 2. Click "Save Configuration"
 3. Click "Load Libraries" to see your Plex libraries
 4. Select which libraries to include
@@ -141,6 +146,9 @@ python main.py
 - Add any item to your Plex watchlist
 - Clear your entire watchlist from the Configuration tab
 - Items sync with your Plex server
+
+### Plex Watch History and Ratings
+In short, you have the option to import your prior watch history and Plex side ratings. This allows the program to create better recommendations.
 
 ## Need Help?
 

@@ -35,7 +35,7 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QTabWidget, QWidget, QVBoxLayout, QHBoxLayout, QLabel, 
     QTextEdit, QPushButton, QGroupBox, QFormLayout, QLineEdit, QListWidget, 
     QListWidgetItem, QMessageBox, QAbstractItemView, QDialog, QRadioButton, 
-    QDialogButtonBox, QButtonGroup, QToolButton
+    QDialogButtonBox, QButtonGroup, QToolButton, QCheckBox
 )
 from PySide6.QtCore import (
     Qt, QTimer, QThread, Signal, QUrl, QObject, QEventLoop, QSize, QMutex, QRegularExpression
@@ -190,6 +190,16 @@ class Database:
                         ALTER TABLE media_items 
                         ADD COLUMN last_recommended TIMESTAMP
                     ''')
+                
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS plex_metadata (
+                        media_id INTEGER PRIMARY KEY,
+                        plex_rating INTEGER,
+                        watch_progress REAL,
+                        last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        FOREIGN KEY (media_id) REFERENCES media_items (id)
+                    )
+                ''')
 
                 cursor.execute('''
                     SELECT COUNT(*) FROM pragma_table_info('media_items') 
@@ -1148,6 +1158,12 @@ class MediaRecommenderApp(QMainWindow):
             self.schedule_cache_updates()
             print("Cache updates scheduled")
             
+            self.recommender = RecommendationEngine(
+                self.db,
+                use_plex_history=self.use_plex_history.isChecked(),
+                use_plex_ratings=self.use_plex_ratings.isChecked()
+            )
+
             if not hasattr(self, 'background_trainer') or self.background_trainer is None:
                 self.background_trainer = BackgroundTrainer(self.recommender, self.db)
                 self.background_trainer.training_status.connect(self.update_progress)
@@ -1747,6 +1763,24 @@ class MediaRecommenderApp(QMainWindow):
         plex_group.setLayout(plex_layout)
         layout.addWidget(plex_group)
 
+        plex_features_group = QGroupBox("Plex Integration")
+        plex_features_layout = QVBoxLayout()
+
+        self.use_plex_history = QCheckBox("Consider Plex watch history")
+        self.use_plex_history.setToolTip("Use Plex watch history as a positive indicator for recommendations")
+        plex_features_layout.addWidget(self.use_plex_history)
+
+        self.use_plex_ratings = QCheckBox("Consider Plex ratings")
+        self.use_plex_ratings.setToolTip("Import Plex ratings (will be doubled to match 1-10 scale)")
+        plex_features_layout.addWidget(self.use_plex_ratings)
+
+        sync_button = QPushButton("Import Plex Watch History and/or Ratings")
+        sync_button.clicked.connect(self.sync_plex_data)
+        plex_features_layout.addWidget(sync_button)
+
+        plex_features_group.setLayout(plex_features_layout)
+        layout.addWidget(plex_features_group)
+
         api_group = QGroupBox("API Configuration")
         api_layout = QFormLayout()
         
@@ -1911,6 +1945,157 @@ class MediaRecommenderApp(QMainWindow):
             self._rating_mutex.unlock()
 
 
+    def sync_plex_data(self):
+        try:
+            if not all([self.plex_url.text(), self.plex_token.text()]):
+                QMessageBox.warning(self, "Error", "Please configure Plex URL and token first")
+                return
+                
+            self.progress_text.append("Starting Plex sync...")
+            sync_button = self.sender()
+            if sync_button:
+                sync_button.setEnabled(False)
+            
+            try:
+                plex = PlexServer(self.plex_url.text(), self.plex_token.text())
+                
+                if self.use_plex_history.isChecked():
+                    self._sync_watch_history(plex)
+                    
+                if self.use_plex_ratings.isChecked():
+                    self._sync_ratings(plex)
+                    
+                self.progress_text.append("Plex sync completed successfully!")
+                QMessageBox.information(self, "Success", "Plex sync completed successfully!")
+                
+            finally:
+                if sync_button:
+                    sync_button.setEnabled(True)
+                
+        except Exception as e:
+            self.progress_text.append(f"Error during Plex sync: {str(e)}")
+            QMessageBox.critical(self, "Error", f"Failed to sync Plex data: {str(e)}")
+
+    def _sync_watch_history(self, plex):
+        try:
+            self.progress_text.append("Syncing watch history...")
+            cursor = self.db.conn.cursor()
+            
+            synced_count = 0
+            for section in plex.library.sections():
+                if section.type not in ['movie', 'show']:
+                    continue
+                    
+                for item in section.search(unwatched=False):
+                    try:
+                        cursor.execute('''
+                            SELECT id FROM media_items 
+                            WHERE title = ? AND year = ? AND type = ?
+                        ''', (item.title, getattr(item, 'year', None), section.type))
+                        
+                        result = cursor.fetchone()
+                        if not result:
+                            continue
+                            
+                        media_id = result[0]
+                        
+                        if section.type == 'movie':
+                            progress = item.viewOffset / item.duration if hasattr(item, 'duration') and item.duration > 0 else 0
+                        else:
+                            watched_episodes = sum(1 for episode in item.episodes() if episode.isPlayed)
+                            total_episodes = len(list(item.episodes()))
+                            progress = watched_episodes / total_episodes if total_episodes > 0 else 0
+                        
+                        cursor.execute('''
+                            INSERT OR REPLACE INTO plex_metadata (media_id, watch_progress, last_updated)
+                            VALUES (?, ?, CURRENT_TIMESTAMP)
+                        ''', (media_id, progress))
+                        
+                        synced_count += 1
+                        if synced_count % 10 == 0:
+                            self.progress_text.append(f"Processed {synced_count} items...")
+                        
+                    except Exception as e:
+                        self.progress_text.append(f"Error processing {item.title}: {str(e)}")
+                        continue
+                        
+            self.db.conn.commit()
+            self.progress_text.append(f"Watch history sync completed. Processed {synced_count} items.")
+            
+        except Exception as e:
+            raise Exception(f"Error syncing watch history: {str(e)}")
+
+    def _sync_ratings(self, plex):
+        try:
+            self.progress_text.append("Syncing ratings...")
+            cursor = self.db.conn.cursor()
+            
+            synced_count = 0
+            for section in plex.library.sections():
+                if section.type not in ['movie', 'show']:
+                    continue
+                    
+                for item in section.search(userRating__gt=0):
+                    try:
+                        cursor.execute('''
+                            SELECT id FROM media_items 
+                            WHERE title = ? AND year = ? AND type = ?
+                        ''', (item.title, getattr(item, 'year', None), section.type))
+                        
+                        result = cursor.fetchone()
+                        if not result:
+                            continue
+                            
+                        media_id = result[0]
+                        
+                        if hasattr(item, 'userRating'):
+                            plex_rating = item.userRating
+                            rating = max(1, min(10, plex_rating))
+                        else:
+                            continue
+                        
+                        cursor.execute('''
+                            INSERT OR REPLACE INTO plex_metadata 
+                            (media_id, plex_rating, last_updated)
+                            VALUES (?, ?, CURRENT_TIMESTAMP)
+                        ''', (media_id, rating))
+                        
+                        cursor.execute('''
+                            INSERT OR IGNORE INTO user_feedback (media_id, rating)
+                            VALUES (?, ?)
+                        ''', (media_id, rating))
+                        
+                        synced_count += 1
+                        if synced_count % 10 == 0:
+                            self.progress_text.append(f"Processed {synced_count} ratings...")
+                        
+                    except Exception as e:
+                        self.progress_text.append(f"Error processing rating for {item.title}: {str(e)}")
+                        continue
+                        
+            self.db.conn.commit()
+            self.progress_text.append(f"Ratings sync completed. Processed {synced_count} ratings.")
+            
+        except Exception as e:
+            raise Exception(f"Error syncing ratings: {str(e)}")
+
+
+    def _process_watched_item(self, cursor, item, media_type):
+        try:
+            cursor.execute('''
+                INSERT INTO user_feedback (media_id, rating)
+                SELECT id, 7
+                FROM media_items
+                WHERE title = ? AND year = ? AND type = ?
+                AND id NOT IN (SELECT media_id FROM user_feedback)
+            ''', (item.title, getattr(item, 'year', None), media_type))
+            
+            self.db.conn.commit()
+            
+        except Exception as e:
+            raise Exception(f"Error processing watched item: {str(e)}")
+
+
      
     def load_config(self):
         config_path = 'config.json'
@@ -1922,6 +2107,7 @@ class MediaRecommenderApp(QMainWindow):
                     self.plex_token.setText(config.get('plex_token', ''))
                     self.tvdb_key.setText(config.get('tvdb_key', ''))
                     self.tmdb_key.setText(config.get('tmdb_key', ''))
+                    
                 print("Configuration loaded successfully!")
             else:
                 print("Configuration file not found.")
@@ -2398,7 +2584,9 @@ class MediaRecommenderApp(QMainWindow):
             'tvdb_key': self.tvdb_key.text().strip(),
             'tmdb_key': self.tmdb_key.text().strip(),
             'collection_name': self.collection_name.text().strip(),
-            'auto_collect_threshold': self.auto_collect_threshold.text().strip()
+            'auto_collect_threshold': self.auto_collect_threshold.text().strip(),
+            'use_plex_history': self.use_plex_history.isChecked(),
+            'use_plex_ratings': self.use_plex_ratings.isChecked()
         }
 
         try:
@@ -2421,7 +2609,9 @@ class MediaRecommenderApp(QMainWindow):
                     self.tvdb_key.setText(config.get('tvdb_key', ''))
                     self.tmdb_key.setText(config.get('tmdb_key', ''))
                     self.collection_name.setText(config.get('collection_name', 'AI Recommended'))
-                    self.auto_collect_threshold.setText(config.get('auto_collect_threshold', '')) 
+                    self.auto_collect_threshold.setText(config.get('auto_collect_threshold', ''))
+                    self.use_plex_history.setChecked(config.get('use_plex_history', False))
+                    self.use_plex_ratings.setChecked(config.get('use_plex_ratings', False)) 
                 print("Configuration loaded successfully!")
             else:
                 print("Configuration file not found.")
@@ -3475,7 +3665,7 @@ class JSONUtils:
             return set()
 
 class RecommendationEngine:
-    def __init__(self, db):
+    def __init__(self, db, use_plex_history=False, use_plex_ratings=False):
         self.db = db
         self.logger = logging.getLogger(__name__)
         self.device = torch.device('cpu')
@@ -3493,7 +3683,8 @@ class RecommendationEngine:
         self.skipped_items = {'movie': set(), 'show': set()}
         self.blocked_items = set()
         self.adaptive_learner = AdaptiveLearner(db)
-        
+        self.use_plex_history = use_plex_history
+        self.use_plex_ratings = use_plex_ratings
         try:
             cursor = self.db.conn.cursor()
             cursor.execute('SELECT id FROM media_items WHERE is_blocked = 1')
@@ -3609,22 +3800,20 @@ class RecommendationEngine:
 
     def _setup_models(self):
         try:
-            
             self.text_processor = TextProcessor('cpu')
-            
-            
             self.content_encoder = ContentEncoder().to('cpu')
-            
-            
             self.genre_encoder = GenreEncoder().to('cpu')
             self.temporal_encoder = TemporalEncoder().to('cpu')
             self.metadata_encoder = MetadataEncoder().to('cpu')
-            
-            
             self.graph_conv = GraphConvNetwork().to('cpu')
             self.graph_attention = GraphAttentionNetwork().to('cpu')
             self.graph_sage = GraphSageNetwork().to('cpu')
-            
+            self.prediction_head = nn.Sequential(
+                nn.Linear(384, 128),
+                nn.ReLU(),
+                nn.Linear(128, 1),
+                nn.Sigmoid()
+            ).to('cpu')
             
             for model in [
                 self.content_encoder,
@@ -3633,13 +3822,15 @@ class RecommendationEngine:
                 self.metadata_encoder,
                 self.graph_conv,
                 self.graph_attention,
-                self.graph_sage
+                self.graph_sage,
+                self.prediction_head
             ]:
                 model.eval()
                 
         except Exception as e:
             self.logger.error(f"Error setting up models: {str(e)}")
             raise
+
         
     def _extract_entities(self, text: str) -> List[str]:
         try:
@@ -3883,6 +4074,11 @@ class RecommendationEngine:
                 AND is_blocked = 0
                 AND id NOT IN (SELECT media_id FROM user_feedback)
                 AND id NOT IN (
+                    SELECT media_id FROM plex_metadata 
+                    WHERE (type = 'movie' AND watch_progress >= 0.8)
+                    OR (type = 'show' AND watch_progress >= 0.6)
+                )
+                AND id NOT IN (
                     SELECT id FROM media_items 
                     WHERE last_recommended > datetime('now', '-2 hours')
                 )
@@ -3923,6 +4119,7 @@ class RecommendationEngine:
             self.logger.error(f"Error getting candidates: {str(e)}")
             print(f"Database error in _get_candidates: {str(e)}")
             return []
+
 
     def get_next_recommendation(self, media_type: str) -> Optional[Dict]:
         try:
@@ -4008,9 +4205,19 @@ class RecommendationEngine:
 
     def _calculate_item_score(self, item_data: Dict) -> float:
         try:
-            
+            cursor = self.db.conn.cursor()
+            cursor.execute('SELECT rating FROM user_feedback WHERE media_id = ?', (item_data['id'],))
+            if cursor.fetchone():
+                return 0.0
+                
+            cursor.execute('SELECT watch_progress, plex_rating FROM plex_metadata WHERE media_id = ?', (item_data['id'],))
+            plex_data = cursor.fetchone()
+            if plex_data and self.use_plex_history:
+                if ((item_data['type'] == 'movie' and plex_data[0] >= 0.8) or 
+                    (item_data['type'] == 'show' and plex_data[0] >= 0.6)):
+                    return 0.0
+
             adaptive_score = self.adaptive_learner.get_recommendation_score(item_data)
-            
             
             popularity = float(item_data.get('popularity', 0))
             vote_average = float(item_data.get('vote_average', 0))
@@ -4022,7 +4229,6 @@ class RecommendationEngine:
             
             genre_bonus = self._calculate_genre_match_bonus(item_data.get('genres', '[]'))
             
-            
             traditional_score = (
                 0.35 * norm_popularity + 
                 0.35 * norm_vote_avg + 
@@ -4030,6 +4236,12 @@ class RecommendationEngine:
                 0.10 * genre_bonus
             ) * 100
             
+            if plex_data:
+                watch_progress, plex_rating = plex_data
+                if self.use_plex_history and watch_progress and watch_progress < 0.8:
+                    traditional_score *= (1 + (watch_progress * 0.15))
+                if self.use_plex_ratings and plex_rating:
+                    traditional_score *= (1 + ((plex_rating / 10.0) * 0.25))
             
             final_score = (adaptive_score + traditional_score) / 2
             
@@ -4408,8 +4620,10 @@ class RecommendationEngine:
                 self.feedback_thread.quit()
                 self.feedback_thread.wait(1000)
         
-            
-            
+            if hasattr(self, 'prediction_head'):
+                self.prediction_head.cpu()
+                delattr(self, 'prediction_head')
+
             if hasattr(self, 'text_processor'):
                 del self.text_processor
             
