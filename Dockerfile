@@ -24,7 +24,7 @@ RUN . /venv/bin/activate && pip install --upgrade pip && pip install -r /app/req
 # Copy start script
 COPY startapp.sh /startapp.sh
 
-# Make the start script executable
+# Make the start script exeutable
 RUN chmod +x /startapp.sh
 
 # Set the name of the application
