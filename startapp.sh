@@ -1,2 +1,3 @@
 #!/bin/sh
-exec python3 ./app/main.py
+. /venv/bin/activate
+exec python3 /app/main.py
