@@ -1,35 +1,27 @@
-# Use jlesage/docker-baseimage-gui as the base image
-FROM jlesage/baseimage-gui:debian-12-v4
+# Use the jlesage/baseimage-gui image as the base
+FROM jlesage/baseimage-gui:alpine-3.16
 
 # Set working directory
 WORKDIR /app
 
-# Copy application files
+# Copy application files into the container
 COPY . /app
 
-# Set environment variables required by the base image
-ENV APP_NAME="RECOMMENDER WEB GUI"
-ENV KEEP_APP_RUNNING=1
+# Install required system dependencies
+RUN apk add --no-cache \
+    python3 \
+    py3-pip \
+    sqlite \
+    && pip3 install --upgrade pip
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y \
-    sqlite3 \
-    python3-pyqt6 \
-    python3-pip \
-    python3-venv \
-    libgl1 \
-    && rm -rf /var/lib/apt/lists/*
+# Install Python dependencies
+RUN pip3 install -r /app/requirements.txt
 
-# Create a Python virtual environment in the app directory
-RUN python3 -m venv /app/venv \
-    && /app/venv/bin/python -m pip install --no-cache-dir --upgrade pip \
-    && /app/venv/bin/python -m pip install --no-cache-dir -r /app/requirements.txt
-
-# Ensure the venv is executable
-RUN chmod -R 755 /app/venv
-
-# Expose the VNC port used by the base image (default: 5800)
+# Expose the default VNC port
 EXPOSE 5800
 
-# Use the virtual environment Python to run the application
-CMD ["/app/venv/bin/python3", "/app/main.py"]
+# Set environment variables for GUI
+ENV APP_NAME="Recommender"
+
+# Command to run your Python application
+CMD ["python3", "/app/main.py"]
