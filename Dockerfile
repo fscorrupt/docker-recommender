@@ -1,5 +1,5 @@
 # Use the jlesage/baseimage-gui image as the base
-FROM jlesage/baseimage-gui:alpine-3.16
+FROM jlesage/baseimage-gui:latest
 
 # Set working directory
 WORKDIR /app
