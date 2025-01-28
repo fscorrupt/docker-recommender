@@ -1,5 +1,5 @@
 # Use the jlesage/baseimage-gui image as the base
-FROM jlesage/baseimage-gui:alpine-3.15-v4
+FROM jlesage/baseimage-gui:debian-11-v4
 
 # Set working directory
 WORKDIR /app
