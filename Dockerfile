@@ -15,7 +15,7 @@ RUN apt-get update && apt-get install -y \
 # Create and activate virtual environment
 RUN python3 -m venv /venv
 
-# Copy application files
+# Copy application files into the container's /app directory
 COPY . /app
 
 # Activate virtual environment and install dependencies

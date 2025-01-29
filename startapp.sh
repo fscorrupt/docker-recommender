@@ -1,3 +1,6 @@
-#!/bin/sh
-. /venv/bin/activate
-exec python3 /app/main.py
+#!/bin/bash
+# Activate the virtual environment
+source /venv/bin/activate
+
+# Run the Python script
+python3 /app/main.py
