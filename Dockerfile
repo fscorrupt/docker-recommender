@@ -1,16 +1,14 @@
 # Use Debian-base
-FROM jlesage/baseimage-gui:ubuntu-20.04-v4.7.0
+FROM jlesage/baseimage-gui:alpine-3.18-v4.7.0
 
 # Set working directory
 WORKDIR /app
 
-# Install Python and system dependencies
-RUN apt-get update && apt-get install -y \
-    python3 \
-    python3-venv \
-    python3-pip \
-    sqlite3 \
-    && apt-get clean
+# Install system dependencies and cleanup after install
+RUN apk update && apk add --no-cache \
+    sqlite \
+    bash \
+    && rm -rf /var/cache/apk/*
 
 # Create and activate virtual environment
 RUN python3 -m venv /venv
@@ -18,17 +16,18 @@ RUN python3 -m venv /venv
 # Copy application files
 COPY . /app
 
-# Activate virtual environment and install dependencies
-RUN . /venv/bin/activate && pip install --upgrade pip && pip install -r /app/requirements.txt
+# Install Python dependencies into virtual environment
+RUN /venv/bin/pip install --upgrade pip && \
+    /venv/bin/pip install -r /app/requirements.txt
 
 # Copy start script
 COPY startapp.sh /startapp.sh
 
-# Make the start script exeutable
+# Make the start script executable
 RUN chmod +x /startapp.sh
 
-# Set the name of the application
-RUN set-cont-env APP_NAME "Recommender"
+# Set environment variable for the application name
+ENV APP_NAME="Recommender"
 
 # Expose the default VNC port
 EXPOSE 5800
