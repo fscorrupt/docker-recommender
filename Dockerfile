@@ -4,12 +4,16 @@ FROM jlesage/baseimage-gui:alpine-3.18-v4.7.0
 # Set working directory
 WORKDIR /app
 
-# Install system dependencies and cleanup after install
+# Install system dependencies, Qt libraries, and cleanup after install
 RUN apk update && apk add --no-cache \
     sqlite \
     bash \
     python3 \
     py3-pip \
+    build-base \
+    qt5-qtbase-dev \
+    qt5-qtsvg-dev \
+    qt5-qtwebkit-dev \
     && rm -rf /var/cache/apk/*
 
 # Create and activate virtual environment
