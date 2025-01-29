@@ -8,6 +8,8 @@ WORKDIR /app
 RUN apk update && apk add --no-cache \
     sqlite \
     bash \
+    python3 \
+    py3-pip \
     && rm -rf /var/cache/apk/*
 
 # Create and activate virtual environment
