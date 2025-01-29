@@ -1,4 +1,4 @@
-# Use Debian-based GUI image
+# Use Debian based GUI image
 FROM jlesage/baseimage-gui:debian-11-v4.7.0
 
 # Set working directory
