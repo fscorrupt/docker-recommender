@@ -48,6 +48,12 @@ jobs:
         id: buildx
         uses: docker/setup-buildx-action@v3.6.1
 
+      - name: Clean up unused Docker objects (before build)
+        run: |
+          docker system prune -af
+          docker volume prune -f
+          docker builder prune -f
+
       - name: Cache Docker layers
         uses: actions/cache@v4
         with:
@@ -124,3 +130,6 @@ jobs:
                   ]
                 }' \
             ${{ secrets.DISCORD_WEBHOOK }}
+
+      - name: Check disk space (post-build)
+        run: df -h

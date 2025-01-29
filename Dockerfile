@@ -1,4 +1,4 @@
-# Use Debian-based GUI
+# Use Debian-base
 FROM jlesage/baseimage-gui:ubuntu-20.04-v4.7.0
 
 # Set working directory
