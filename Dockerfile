@@ -1,5 +1,5 @@
 # Use Debian-based GUI image
-FROM jlesage/baseimage-gui:debian-11-v4.7.0
+FROM jlesage/baseimage-gui:ubuntu-20.04-v4.7.0
 
 # Set working directory
 WORKDIR /app
