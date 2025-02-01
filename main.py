@@ -1144,33 +1144,21 @@ class MediaRecommenderApp(QMainWindow):
 
     def init_background_components(self):
         try:
-            print("Initializing background components...")
-            
             self.db = Database.get_instance()
-            print("Database initialized")
-            
-            self.recommender = RecommendationEngine(self.db)
-            print("Recommendation engine initialized")
-            
-            self.media_scanner = MediaScanner()
-            print("Media scanner initialized")
-            
-            self.schedule_cache_updates()
-            print("Cache updates scheduled")
-            
             self.recommender = RecommendationEngine(
                 self.db,
                 use_plex_history=self.use_plex_history.isChecked(),
                 use_plex_ratings=self.use_plex_ratings.isChecked()
             )
-
-            if not hasattr(self, 'background_trainer') or self.background_trainer is None:
-                self.background_trainer = BackgroundTrainer(self.recommender, self.db)
-                self.background_trainer.training_status.connect(self.update_progress)
-                self.background_trainer.training_status.connect(self._handle_training_status)
-                self.background_trainer.start()
-                print("Background trainer initialized and started")
-                
+            self.embedding_worker = EmbeddingPrecomputeWorker(self.recommender, interval=3600)
+            self.embedding_worker.progress.connect(self.update_progress)
+            self.embedding_worker.start()
+            self.media_scanner = MediaScanner()
+            self.poster_downloader = PosterDownloader()
+            self.background_trainer = BackgroundTrainer(self.recommender, self.db)
+            self.background_trainer.training_status.connect(self.update_progress)
+            self.background_trainer.training_status.connect(self._handle_training_status)
+            self.background_trainer.start()
             try:
                 self.media_scanner.configure(
                     plex_url=self.plex_url.text(),
@@ -1178,12 +1166,9 @@ class MediaRecommenderApp(QMainWindow):
                     tvdb_key=self.tvdb_key.text(),
                     tmdb_key=self.tmdb_key.text()
                 )
-                print("Media scanner configured")
             except Exception as e:
                 self.logger.error(f"Warning: Could not configure media scanner: {e}")
-            
             QTimer.singleShot(1000, self._load_initial_recommendations)
-            
         except Exception as e:
             self.logger.error(f"Error in background initialization: {e}")
             print(f"Error initializing components: {e}")
@@ -2451,69 +2436,40 @@ class MediaRecommenderApp(QMainWindow):
             self.progress_text.append(f"Error refreshing recommendations: {str(e)}")
             
     def closeEvent(self, event):
-        print("\nInitiating application shutdown...")
-        
-        progress_dialog = QDialog(self)
-        progress_dialog.setWindowTitle("Shutting Down")
-        layout = QVBoxLayout()
-        status_label = QLabel("Cleaning up resources...")
-        layout.addWidget(status_label)
-        progress_dialog.setLayout(layout)
-        progress_dialog.setModal(True)
-        progress_dialog.show()
-        QApplication.processEvents()
-
         try:
-            
-            if hasattr(self, 'scan_thread') and self.scan_thread:
+            if hasattr(self, 'scan_thread') and self.scan_thread and self.scan_thread.isRunning():
                 self.scan_thread.stop()
-                self.scan_thread.wait(2000)  
-                
+                self.scan_thread.wait(2000)
             if hasattr(self, 'background_trainer') and self.background_trainer:
                 self.background_trainer.stop()
                 if self.background_trainer.isRunning():
                     self.background_trainer.wait(2000)
-
             if hasattr(self, 'recommender') and self.recommender:
-                
                 if hasattr(self.recommender, 'feedback_processor'):
                     if hasattr(self.recommender.feedback_processor, 'stop'):
                         self.recommender.feedback_processor.stop()
                     if hasattr(self.recommender.feedback_processor, 'cleanup'):
                         self.recommender.feedback_processor.cleanup()
-                
                 if hasattr(self.recommender, 'feedback_thread'):
                     if self.recommender.feedback_thread.isRunning():
                         self.recommender.feedback_thread.quit()
                         self.recommender.feedback_thread.wait(2000)
                 self.recommender.cleanup()
-
-            
+            if hasattr(self, 'embedding_worker') and self.embedding_worker and self.embedding_worker.isRunning():
+                self.embedding_worker.stop()
+                self.embedding_worker.wait(2000)
             cleanup_thread = QThread()
             cleanup_worker = CleanupWorker(self)
             cleanup_worker.moveToThread(cleanup_thread)
-            
-            
-            cleanup_thread.started.connect(
-                lambda: self._safe_cleanup(cleanup_worker, status_label)
-            )
+            cleanup_thread.started.connect(lambda: self._safe_cleanup(cleanup_worker, "Cleaning up resources..."))
             cleanup_worker.finished.connect(cleanup_thread.quit)
             cleanup_worker.finished.connect(cleanup_worker.deleteLater)
             cleanup_thread.finished.connect(cleanup_thread.deleteLater)
-            cleanup_worker.finished.connect(progress_dialog.close)
             cleanup_worker.finished.connect(lambda: event.accept())
-            
-            
-            QTimer.singleShot(10000, 
-                lambda: self._force_cleanup(cleanup_thread, event, progress_dialog)
-            )
-            
-            
+            QTimer.singleShot(10000, lambda: self._force_cleanup(cleanup_thread, event, None))
             cleanup_thread.start()
-
         except Exception as e:
-            self.logger.error(f"Error during shutdown: {str(e)}")
-            progress_dialog.close()
+            self.logger.error(f"Error during shutdown: {e}")
             event.accept()
 
     def _safe_cleanup(self, worker, status_label):
@@ -2635,79 +2591,55 @@ class MediaRecommenderApp(QMainWindow):
     def show_error(self, title, message):
         QMessageBox.critical(self, title, message)
 
-class ContentEncoder(nn.Module):
-    def __init__(self, input_dim=None, hidden_dim=None, output_dim=None):
+class ModalityFusionWithAttention(nn.Module):
+    def __init__(self, modality_dims, fused_dim, hidden_dim=64):
         super().__init__()
-        
-        self.input_dim = 2564  
-        self.hidden_dim = 512  
-        self.output_dim = 384  
-        
-        print(f"Initializing ContentEncoder with dims: input={self.input_dim}, hidden={self.hidden_dim}, output={self.output_dim}")
-        
-        
+        self.transformers = nn.ModuleList([nn.Linear(dim, fused_dim) for dim in modality_dims])
+        self.attention_fc1 = nn.Linear(fused_dim, hidden_dim)
+        self.attention_fc2 = nn.Linear(hidden_dim, 1)
+    def forward(self, modality_features):
+        transformed = []
+        for i, feature in enumerate(modality_features):
+            transformed.append(self.transformers[i](feature))
+        stack = torch.stack(transformed, dim=1)
+        attn_scores = self.attention_fc2(F.relu(self.attention_fc1(stack)))
+        attn_scores = attn_scores.squeeze(-1)
+        weights = torch.softmax(attn_scores, dim=1)
+        fused = (stack * weights.unsqueeze(-1)).sum(dim=1)
+        return fused, weights
+
+class ContentEncoder(nn.Module):
+    def __init__(self, input_dim=256, hidden_dim=512, output_dim=384):
+        super(ContentEncoder, self).__init__()
+        self.input_dim = input_dim
+        self.hidden_dim = hidden_dim
+        self.output_dim = output_dim
         self.fc1 = nn.Linear(self.input_dim, self.hidden_dim)
         self.norm1 = nn.LayerNorm(self.hidden_dim)
         self.dropout1 = nn.Dropout(0.1)
-        
-        
         self.fc2 = nn.Linear(self.hidden_dim, self.hidden_dim)
         self.norm2 = nn.LayerNorm(self.hidden_dim)
         self.dropout2 = nn.Dropout(0.1)
-        
-        
         self.fc3 = nn.Linear(self.hidden_dim, self.output_dim)
         self.norm3 = nn.LayerNorm(self.output_dim)
-        
-        
         self.attention = nn.Linear(self.output_dim, 1)
-        
-        
         nn.init.xavier_uniform_(self.fc1.weight)
         nn.init.xavier_uniform_(self.fc2.weight)
         nn.init.xavier_uniform_(self.fc3.weight)
         nn.init.zeros_(self.attention.weight)
-        
-        self.debug = False
-
     def forward(self, x):
-        if self.debug:
-            print(f"\nContentEncoder forward pass:")
-            print(f"Input shape: {x.shape}")
-        
-        
         x = self.fc1(x)
         x = F.gelu(x)
         x = self.norm1(x)
         x = self.dropout1(x)
-        
-        if self.debug:
-            print(f"After fc1 shape: {x.shape}")
-        
-        
         x = self.fc2(x)
         x = F.gelu(x)
         x = self.norm2(x)
         x = self.dropout2(x)
-        
-        if self.debug:
-            print(f"After fc2 shape: {x.shape}")
-        
-        
         x = self.fc3(x)
         x = self.norm3(x)
-        
-        if self.debug:
-            print(f"After fc3 shape: {x.shape}")
-        
-        
-        attention = torch.sigmoid(self.attention(x))
-        x = x * attention
-        
-        if self.debug:
-            print(f"Final output shape: {x.shape}")
-            print(f"Output mean: {x.mean().item():.4f}, std: {x.std().item():.4f}")
-            
+        attn = torch.sigmoid(self.attention(x))
+        x = x * attn
         return x
 
 class GenreEncoder(nn.Module):
@@ -2984,6 +2916,64 @@ class GraphEdgeUpdater(QThread):
             reciprocal_edge = (self.node_id, 'similar_to')
             if reciprocal_edge not in self.recommender.knowledge_graph['edges'][similar_id]:
                 self.recommender.knowledge_graph['edges'][similar_id].append(reciprocal_edge)
+
+    def stop(self):
+        self._stop_flag = True
+
+class EmbeddingPrecomputeWorker(QThread):
+    progress = Signal(str)
+    finished = Signal()
+
+    def __init__(self, recommender, interval=3600):
+        super().__init__()
+        self.recommender = recommender
+        self.interval = interval
+        self._stop_flag = False
+
+    def run(self):
+        while not self._stop_flag:
+            self.progress.emit("Starting precomputation of static embeddings...")
+            try:
+                self.precompute_embeddings()
+            except Exception as e:
+                self.progress.emit(f"Error precomputing embeddings: {e}")
+            for _ in range(self.interval):
+                if self._stop_flag:
+                    break
+                time.sleep(1)
+        self.finished.emit()
+
+    def precompute_embeddings(self):
+        db = self.recommender.db
+        cursor = db.conn.cursor()
+        query = """
+            SELECT id 
+            FROM media_items 
+            WHERE id NOT IN (
+                SELECT media_id 
+                FROM embedding_cache
+            )
+        """
+        cursor.execute(query)
+        item_ids = [row[0] for row in cursor.fetchall()]
+        self.progress.emit(f"Found {len(item_ids)} items needing embedding update.")
+        for media_id in item_ids:
+            if self._stop_flag:
+                break
+            try:
+                cursor.execute("SELECT * FROM media_items WHERE id = ?", (media_id,))
+                row = cursor.fetchone()
+                if not row:
+                    continue
+                columns = [desc[0] for desc in cursor.description]
+                item = dict(zip(columns, row))
+                embedding = self.recommender._compute_embedding(item)
+                db.save_embedding(media_id, embedding.cpu().detach().numpy().tobytes())
+                self.progress.emit(f"Updated embedding for media_id {media_id}")
+            except Exception as e:
+                self.progress.emit(f"Error processing media_id {media_id}: {e}")
+                continue
+        cursor.close()
 
     def stop(self):
         self._stop_flag = True
@@ -3676,7 +3666,12 @@ class RecommendationEngine:
         self.tensor_lock = threading.Lock()
         self.training_lock = threading.Lock()
         self.is_processing = threading.Event()
-        
+        self.modality_fusion = ModalityFusionWithAttention(
+            modality_dims=[768, 4, 256, 256, 256, 1024],
+            fused_dim=256,
+            hidden_dim=64
+        )
+        self.content_encoder = ContentEncoder(input_dim=256, hidden_dim=512, output_dim=384)
         self.embedding_cache = {}
         self.similarity_matrix = None
         self.last_matrix_update = None
@@ -4381,59 +4376,23 @@ class RecommendationEngine:
 
 
      
-    def _compute_embedding(self, media_item: Dict) -> torch.Tensor:
-        try:
-            
-            cache_key = media_item['id']
-            with self.embeddings_lock:
-                cached_embedding = self.db.load_embedding(cache_key)
-                if cached_embedding is not None:
-                    array = np.frombuffer(cached_embedding, dtype=np.float32).copy()
-                    return torch.from_numpy(array).to('cpu').view(1, -1)
-
-            
-            text_features = self.text_processor.process_text_features(media_item)
-            
-            
-            numerical_features = self._encode_numerical_features(media_item)
-            categorical_features = self._encode_categorical_features(media_item)
-            temporal_features = self._encode_temporal_features(media_item)
-            metadata_features = self._encode_metadata_features(media_item)
-            graph_features = self._compute_graph_features(media_item)
-
-            
-            if hasattr(self.content_encoder, 'debug') and self.content_encoder.debug:
-                print(f"\nFeature shapes:")
-                print(f"text_features: {text_features.shape}")
-                print(f"numerical_features: {numerical_features.shape}")
-                print(f"categorical_features: {categorical_features.shape}")
-                print(f"temporal_features: {temporal_features.shape}")
-                print(f"metadata_features: {metadata_features.shape}")
-                print(f"graph_features: {graph_features.shape}")
-
-            
-            combined_features = torch.cat([
-                text_features,
-                numerical_features,
-                categorical_features,
-                temporal_features,
-                metadata_features,
-                graph_features
-            ], dim=1)
-
-            
-            with torch.no_grad():
-                embedding = self.content_encoder(combined_features)
-
-            
-            with self.embeddings_lock:
-                self.db.save_embedding(cache_key, embedding.cpu().numpy().tobytes())
-
-            return embedding
-
-        except Exception as e:
-            self.logger.error(f"Error computing embedding: {str(e)}")
-            return torch.zeros((1, 384), device=self.device)
+    def _compute_embedding(self, item: dict) -> torch.Tensor:
+        text_features = self.text_processor.process_text_features(item)
+        numerical_features = self._encode_numerical_features(item)
+        categorical_features = self._encode_categorical_features(item)
+        temporal_features = self._encode_temporal_features(item)
+        metadata_features = self._encode_metadata_features(item)
+        graph_features = self._compute_graph_features(item)
+        fused_features, attn_weights = self.modality_fusion([
+            text_features,
+            numerical_features,
+            categorical_features,
+            temporal_features,
+            metadata_features,
+            graph_features
+        ])
+        embedding = self.content_encoder(fused_features)
+        return embedding
         
     def _extract_subgraph(self, node_id, depth=2):
         subgraph = {
