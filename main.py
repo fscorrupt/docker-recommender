@@ -1725,7 +1725,7 @@ class MediaRecommenderApp(QMainWindow):
         plex_layout = QFormLayout()
         
         self.plex_url = QLineEdit()
-        plex_layout.addRow("Plex URL:", self.plex_url)
+        plex_layout.addRow("Plex Server URL/IP:", self.plex_url)
         
         plex_token_layout = QHBoxLayout()
         self.plex_token = QLineEdit()
